@@ -1,0 +1,582 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USERS & AUTHENTICATION ====================
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  password      String
+  firstName     String
+  lastName      String
+  phoneNumber   String?
+  role          Role       @default(TEACHER)
+  status        UserStatus @default(ACTIVE)
+  profileImage  String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  teacher       Teacher?
+  student       Student?
+  parent        Parent?
+  manager       Manager?
+  auditLogs     AuditLog[]
+  notifications Notification[]
+  sessions      Session[]
+
+  @@index([email])
+  @@index([role])
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  TEACHER
+  STUDENT
+  PARENT
+  STAFF
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  DELETED
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ==================== TEACHERS ====================
+
+model Teacher {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pinCode         String   @unique // للتحقق من الهوية عند الرصد
+  employeeId      String   @unique
+  subject         String   // المادة الدراسية
+  department      String?  // القسم (لغة عربية، رياضيات، إلخ)
+  experienceYears Int      @default(0)
+  qualifications  String? // المؤهلات التعليمية
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  classAssignments ClassAssignment[]
+  grades           Grade[]
+  attendanceRecords AttendanceRecord[]
+  behaviorRecords   BehaviorRecord[]
+  lessons           Lesson[]
+  documents        TeacherDocument[]
+  performanceReviews PerformanceReview[]
+  evaluations      TeacherEvaluation[]
+
+  @@index([employeeId])
+  @@index([subject])
+}
+
+model ClassAssignment {
+  id        String   @id @default(cuid())
+  teacherId String
+  teacher   Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  classId   String
+  class     SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  semester  Int      @default(1) // الفصل الدراسي
+  createdAt DateTime @default(now())
+
+  @@unique([teacherId, classId, semester])
+  @@index([teacherId])
+  @@index([classId])
+}
+
+model PerformanceReview {
+  id              String   @id @default(cuid())
+  teacherId       String
+  teacher         Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  reviewPeriod    String   // الفترة (أول، ثاني، سنوي)
+  rating          Float    @default(0) // 1-5
+  comments        String?
+  strengths       String?
+  areasForImprovement String?
+  reviewedBy      String? // معرّف المدير
+  reviewDate      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([teacherId])
+  @@index([reviewDate])
+}
+
+// ==================== STUDENTS ====================
+
+model Student {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentId       String   @unique // رقم الطالب
+  classId         String
+  class           SchoolClass @relation(fields: [classId], references: [id])
+  section         String   // الشعبة (1، 2، 3...)
+  parentId        String?
+  parent          Parent?  @relation(fields: [parentId], references: [id])
+  learningStyle   LearningStyle @default(VISUAL) // نمط التعلم
+  healthIssues    String?  // المشاكل الصحية إن وجدت
+  specialNeeds    String?  // الاحتياجات الخاصة
+  enrollmentDate  DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  barcode         String?  @unique // رمز QR
+
+  // Relations
+  attendance      AttendanceRecord[]
+  grades          Grade[]
+  behavior        BehaviorRecord[]
+  educationalGaps EducationalGap[]
+  supportPlans    SupportPlan[]
+  requests        StudentRequest[]
+  documents       StudentDocument[]
+
+  @@index([studentId])
+  @@index([classId])
+  @@index([section])
+}
+
+enum LearningStyle {
+  VISUAL      // بصري
+  AUDITORY    // سمعي
+  KINESTHETIC // حركي
+  READING_WRITING // قرائي/كتابي
+}
+
+model Parent {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  relationship    String   // الصلة (والد، والدة، ولي أمر)
+  occupation      String?
+  createdAt       DateTime @default(now())
+
+  // Relations
+  students        Student[]
+  communications  Communication[]
+}
+
+// ==================== MANAGERS ====================
+
+model Manager {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  position      String   // المسمى الوظيفي (مدير، وكيل، منسق)
+  department    String?  // القسم المسؤول عنه
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  circulars     Circular[]
+  approvals     ApprovalWorkflow[]
+  auditLogs     AuditLog[]
+
+  @@index([position])
+}
+
+// ==================== CLASSES & GRADES ====================
+
+model SchoolClass {
+  id            String   @id @default(cuid())
+  name          String   @unique // مثل: الرابع - أ
+  gradeLevel    Int      // المستوى (3، 4، 5، 6)
+  section       String   // الشعبة (أ، ب، ج...)
+  capacity      Int      @default(30)
+  academicYear  String   // السنة الدراسية
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  students      Student[]
+  classAssignments ClassAssignment[]
+  lessons       Lesson[]
+  schedules     Schedule[]
+
+  @@unique([name, academicYear])
+  @@index([gradeLevel])
+  @@index([academicYear])
+}
+
+model Grade {
+  id              String   @id @default(cuid())
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  teacherId       String
+  teacher         Teacher  @relation(fields: [teacherId], references: [id])
+  subject         String
+  assessmentType  String   // تشخيصي، فترة 1، فترة 2، نهائي
+  score           Float
+  maxScore        Float    @default(100)
+  percentage      Float
+  remarks         String?
+  recordedDate    DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([studentId, subject, assessmentType, recordedDate])
+  @@index([studentId])
+  @@index([teacherId])
+  @@index([subject])
+}
+
+model Lesson {
+  id            String   @id @default(cuid())
+  classId       String
+  class         SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacherId     String
+  teacher       Teacher  @relation(fields: [teacherId], references: [id])
+  subject       String
+  topic         String
+  date          DateTime
+  lessonPlan    String?  // رابط/مسار الخطة
+  objectives    String?
+  materials     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([classId])
+  @@index([teacherId])
+  @@index([date])
+}
+
+// ==================== ATTENDANCE & DISCIPLINE ====================
+
+model AttendanceRecord {
+  id            String   @id @default(cuid())
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  teacherId     String
+  teacher       Teacher  @relation(fields: [teacherId], references: [id])
+  classId       String
+  date          DateTime
+  status        AttendanceStatus @default(PRESENT)
+  firstLesson   Boolean  @default(true) // الحصة الأولى
+  remarks       String?
+  recordedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([studentId, date])
+  @@index([studentId])
+  @@index([teacherId])
+  @@index([date])
+  @@index([status])
+}
+
+enum AttendanceStatus {
+  PRESENT    // حاضر
+  ABSENT     // غائب
+  LATE       // متأخر
+  EXCUSED    // معذور
+  PARTIAL    // غياب جزئي
+}
+
+model StudentRequest {
+  id              String   @id @default(cuid())
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classId         String
+  requestType     String   // الاستئذان، الحمام، المشرفة
+  reason          String?
+  time            DateTime
+  duration        Int?     // المدة بالدقائق
+  status          RequestStatus @default(PENDING)
+  approvedBy      String?  // معرّف الموافق
+  approvalTime    DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([studentId])
+  @@index([time])
+  @@index([status])
+}
+
+enum RequestStatus {
+  PENDING   // قيد الانتظار
+  APPROVED  // موافق عليه
+  REJECTED  // مرفوض
+  COMPLETED // منتهي
+}
+
+model BehaviorRecord {
+  id              String   @id @default(cuid())
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  teacherId       String
+  teacher         Teacher  @relation(fields: [teacherId], references: [id])
+  behaviorType    String   // إيجابي، سلبي
+  description     String
+  points          Int      // النقاط (موجبة أو سالبة)
+  category        String?  // الفئة (نظافة، احترام، تعاون...)
+  incidentDate    DateTime
+  consequence     String?  // العقوبة إن وجدت
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([teacherId])
+  @@index([incidentDate])
+}
+
+// ==================== ACADEMIC SUPPORT ====================
+
+model EducationalGap {
+  id              String   @id @default(cuid())
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject         String   // المادة
+  gap             String   // الفاقد التعليمي
+  severity        String   // درجة الخطورة (بسيط، متوسط، شديد)
+  identifiedDate  DateTime @default(now())
+  status          String   @default("open") // open, in_progress, resolved
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  supportPlans    SupportPlan[]
+
+  @@index([studentId])
+  @@index([subject])
+}
+
+model SupportPlan {
+  id              String   @id @default(cuid())
+  gapId           String
+  gap             EducationalGap @relation(fields: [gapId], references: [id], onDelete: Cascade)
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  planType        String   // علاجية، إثرائية
+  objectives      String
+  activities      String
+  duration        Int      // المدة بالأسابيع
+  startDate       DateTime
+  endDate         DateTime?
+  progress        Float    @default(0) // النسبة المئوية للتقدم
+  notes           String?
+  status          String   @default("active") // active, completed, paused
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([gapId])
+}
+
+// ==================== ADMINISTRATIVE ====================
+
+model Circular {
+  id              String   @id @default(cuid())
+  circularNumber  String   @unique // رقم التعميم
+  title           String
+  content         String
+  issuedBy        String
+  issuedDate      DateTime @default(now())
+  hijriDate       String?  // التاريخ الهجري
+  department      String?  // الجهة المصدرة
+  category        String   // التصنيف (خطة تشغيلية، مدرستي، اختبارات...)
+  priority        String   @default("normal") // عادي، مهم، عاجل
+  attachments     String?  // روابط الملفات المرفقة
+  status          String   @default("published")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([issuedDate])
+  @@index([category])
+}
+
+model Evidence {
+  id              String   @id @default(cuid())
+  evidenceCode    String   @unique // EV-01, EV-02...
+  title           String
+  description     String?
+  type            String   // أوراق عمل، خطط علاجية، خطط تشغيلية
+  createdBy       String   // معرّف المعلم/الإداري
+  category        String?  // الفئة التربوية
+  goal            String?  // الهدف التربوي
+  attachmentPath  String?  // مسار الملف/الصورة
+  approvalDate    DateTime?
+  approvedBy      String?  // معرّف الموافق
+  folder          String?  // المجلد الفرعي
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  documents       EvidenceDocument[]
+
+  @@index([type])
+  @@index([category])
+  @@index([createdBy])
+}
+
+model EvidenceDocument {
+  id          String   @id @default(cuid())
+  evidenceId  String
+  evidence    Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  fileName    String
+  filePath    String
+  fileSize    Int
+  uploadedAt  DateTime @default(now())
+  uploadedBy  String
+
+  @@index([evidenceId])
+}
+
+model TeacherDocument {
+  id          String   @id @default(cuid())
+  teacherId   String
+  teacher     Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  documentType String  // خطة درس، أوراق عمل، اختبار
+  filePath    String
+  uploadedAt  DateTime @default(now())
+  uploadedBy  String
+
+  @@index([teacherId])
+}
+
+model StudentDocument {
+  id          String   @id @default(cuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  documentType String  // شهادة، تقرير، نتائج
+  filePath    String
+  uploadedAt  DateTime @default(now())
+
+  @@index([studentId])
+}
+
+// ==================== COMMUNICATION ====================
+
+model Communication {
+  id              String   @id @default(cuid())
+  parentId        String
+  parent          Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  subject         String
+  message         String
+  type            String   // تنبيه، استفسار، شكوى، تهنئة
+  readAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([parentId])
+  @@index([createdAt])
+}
+
+// ==================== SCHEDULES & TIMETABLES ====================
+
+model Schedule {
+  id          String   @id @default(cuid())
+  classId     String
+  class       SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  dayOfWeek   String   // السبت، الأحد، الإثنين...
+  period      Int      // رقم الحصة
+  subject     String
+  startTime   String   // HH:mm
+  endTime     String   // HH:mm
+  teacherId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([classId, dayOfWeek, period])
+  @@index([classId])
+}
+
+// ==================== AUDIT & SECURITY ====================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  managerId   String?
+  manager     Manager? @relation(fields: [managerId], references: [id])
+  action      String   // إنشاء، تعديل، حذف، عرض
+  entityType  String   // Student, Grade, Attendance, etc.
+  entityId    String
+  oldValues   String?  // JSON
+  newValues   String?  // JSON
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime @default(now())
+
+  @@index([userId])
+  @@index([timestamp])
+  @@index([entityType])
+}
+
+model ApprovalWorkflow {
+  id          String   @id @default(cuid())
+  managerId   String
+  manager     Manager  @relation(fields: [managerId], references: [id])
+  requestType String   // نوع الطلب
+  status      String   @default("pending") // pending, approved, rejected
+  requestData String   // JSON بيانات الطلب
+  comments    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([managerId])
+  @@index([status])
+}
+
+// ==================== NOTIFICATIONS ====================
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  type        String   // alert, info, warning, success
+  read        Boolean  @default(false)
+  readAt      DateTime?
+  actionUrl   String?  // رابط للعودة إلى المصدر
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+}
+
+// ==================== TEACHER EVALUATION ====================
+
+model TeacherEvaluation {
+  id              String   @id @default(cuid())
+  teacherId       String
+  teacher         Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  evaluationType  String   // ذاتية، إدارية، أقران
+  criteria        String   // JSON للمعايير والنقاط
+  totalScore      Float
+  feedback        String?
+  evaluationDate  DateTime @default(now())
+  evaluator       String?  // معرّف المقيّم
+  createdAt       DateTime @default(now())
+
+  @@index([teacherId])
+  @@index([evaluationDate])
+}
